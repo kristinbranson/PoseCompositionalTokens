@@ -130,3 +130,6 @@ weights/*
 work_dirs/*
 README.pdf
 gen_script.py
+
+# emacs temp files
+*~

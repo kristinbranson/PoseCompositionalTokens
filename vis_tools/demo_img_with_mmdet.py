@@ -78,10 +78,49 @@ def map_joint_dict(joints):
         
     return joints_dict
 
+def plot_skeleton(dt_joints,ax=None,thickness=1):
+    
+    if ax is None:
+        ax = plt.gca()
+    
+    joints_dict = map_joint_dict(dt_joints)
+    
+    # stick 
+    for k, link_pair in enumerate(chunhua_style.link_pairs):
+        if k in range(11,16):
+            lw = thickness
+        else:
+            lw = thickness * 2
+
+        line = mlines.Line2D(
+                np.array([joints_dict[link_pair[0]][0],
+                            joints_dict[link_pair[1]][0]]),
+                np.array([joints_dict[link_pair[0]][1],
+                            joints_dict[link_pair[1]][1]]),
+                ls='-', lw=lw, alpha=1, color=link_pair[2],)
+        line.set_zorder(0)
+        ax.add_line(line)
+
+    # black ring
+    for k in range(dt_joints.shape[0]):
+        if k in range(5):
+            radius = thickness
+        else:
+            radius = thickness * 2
+
+        circle = mpatches.Circle(tuple(dt_joints[k,:2]), 
+                                    radius=radius, 
+                                    ec='black', 
+                                    fc=chunhua_style.ring_color[k], 
+                                    alpha=1, 
+                                    linewidth=1)
+        circle.set_zorder(1)
+        ax.add_patch(circle)
+    
 
 def vis_pose_result(image_name, pose_results, thickness, out_file):
     
-    data_numpy = cv2.imread(image_name, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    data_numpy = cv2.imread(image_name, cv2.IMREAD_COLOR) # | cv2.IMREAD_IGNORE_ORIENTATION)
 
     h = data_numpy.shape[0]
     w = data_numpy.shape[1]

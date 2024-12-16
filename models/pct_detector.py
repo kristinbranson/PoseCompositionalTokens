@@ -168,13 +168,23 @@ class PCT(BasePose):
 
     def forward_test(self, img, joints, img_metas, **kwargs):
         """Defines the computation performed at every call when testing."""
-        assert img.size(0) == len(img_metas)
+        if (img is not None) and (img_metas is not None):
+            assert img.size(0) == len(img_metas)
 
         results = {}
     
-        batch_size, _, img_height, img_width = img.shape
-        if batch_size > 1:
-            assert 'bbox_id' in img_metas[0]
+        # remove dependency on img
+        
+        if img is None:
+            assert (self.stage_pct == "tokenizer") and (self.image_guide == False), "img must not be None"
+            batch_size = joints.shape[0]
+        else:
+            batch_size = img.shape[0]
+            assert img_metas is not None, "img_metas must not be None"
+
+        if img_metas is not None:
+            if batch_size > 1:
+                assert 'bbox_id' in img_metas[0]
             
         output = None if self.stage_pct == "tokenizer" \
             else self.backbone(img) 
@@ -186,13 +196,33 @@ class PCT(BasePose):
         score_pose = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
             encoding_scores.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
 
+        if img is None:
+            # guess an image size so that the joints are centered
+            joints_center_x = torch.mean(joints[...,0][joints[:,:,2]>0])
+            joints_center_y = torch.mean(joints[...,1][joints[:,:,2]>0])
+            max_x = torch.max(joints[...,0])
+            max_y = torch.max(joints[...,0])
+            im_width = int(torch.ceil(torch.maximum(joints_center_x, max_x)*2).item()+1)
+            im_height = int(torch.ceil(torch.maximum(joints_center_y, max_y)*2).item()+1)
+        else:
+            im_width = img.shape[-1]
+            im_height = img.shape[-2]
+
+        # this is pretty hacky...
         if self.flip_test:
             FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
                     'CROWDPOSE': [1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 12, 13], \
                     'OCCLUSIONPERSON':[0, 4, 5, 6, 1, 2, 3, 7, 8, 12, 13, 14, 9, 10, 11],\
-                    'MPII': [5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 15, 14, 13, 12, 11, 10]}
+                    'MPII': [5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 15, 14, 13, 12, 11, 10],
+                    'fly_bubble_data_20241024_17kp': [0, 2, 1, 4, 3, 5, 6, 9, 10, 7, 8, 16, 15, 14, 13, 12, 11],
+                    'fly_bubble_data_20241024': [0, 2, 1, 4, 3, 5, 6, 9, 10, 7, 8, 16, 15, 14, 13, 12, 11, 19, 20, 17, 18],
+                    }
 
-            img_flipped = img.flip(3)
+            # remove dependence on img
+            if img is None:
+                img_flipped = None
+            else:
+                img_flipped = img.flip(3)
     
             features_flipped = None if self.stage_pct == "tokenizer" \
                 else self.backbone(img_flipped) 
@@ -202,16 +232,16 @@ class PCT(BasePose):
             if joints is not None:
                 joints_flipped = joints.clone()
                 joints_flipped = joints_flipped[:,FLIP_INDEX[self.dataset_name],:]
-                joints_flipped[:,:,0] = img.shape[-1] - 1 - joints_flipped[:,:,0]
+                joints_flipped[:,:,0] = im_width - 1 - joints_flipped[:,:,0]
             else:
                 joints_flipped = None
-                
+                p_joints[0,:,0].cpu().numpy()
             p_joints_f, encoding_scores_f = \
                 self.keypoint_head(features_flipped, \
                     extra_output_flipped, joints_flipped, train=False)
 
             p_joints_f = p_joints_f[:,FLIP_INDEX[self.dataset_name],:]
-            p_joints_f[:,:,0] = img.shape[-1] - 1 - p_joints_f[:,:,0]
+            p_joints_f[:,:,0] = im_width - 1 - p_joints_f[:,:,0]
 
             score_pose_f = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
                 encoding_scores_f.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
@@ -219,32 +249,34 @@ class PCT(BasePose):
             p_joints = (p_joints + p_joints_f)/2.0
             score_pose = (score_pose + score_pose_f)/2.0
 
-        batch_size = len(img_metas)
-
-        if 'bbox_id' in img_metas[0]:
+        bbox_ids = None
+        if (img_metas is not None) and ('bbox_id' in img_metas[0]):
             bbox_ids = []
-        else:
-            bbox_ids = None
 
         c = np.zeros((batch_size, 2), dtype=np.float32)
-        s = np.zeros((batch_size, 2), dtype=np.float32)
-        image_paths = []
+        s = np.ones((batch_size, 2), dtype=np.float32)
         score = np.ones(batch_size)
-        for i in range(batch_size):
-            c[i, :] = img_metas[i]['center']
-            s[i, :] = img_metas[i]['scale']
-            image_paths.append(img_metas[i]['image_file'])
+        if img_metas is None:
+            c[:, 0] = im_width / 2
+            c[:, 1] = im_height / 2
+            image_paths = None
+        else:
+            image_paths = []
+            for i in range(batch_size):
+                c[i, :] = img_metas[i]['center']
+                s[i, :] = img_metas[i]['scale']
+                image_paths.append(img_metas[i]['image_file'])
 
-            if 'bbox_score' in img_metas[i]:
-                score[i] = np.array(img_metas[i]['bbox_score']).reshape(-1)
-            if bbox_ids is not None:
-                bbox_ids.append(img_metas[i]['bbox_id'])
+                if 'bbox_score' in img_metas[i]:
+                    score[i] = np.array(img_metas[i]['bbox_score']).reshape(-1)
+                if bbox_ids is not None:
+                    bbox_ids.append(img_metas[i]['bbox_id'])
 
         p_joints = p_joints.cpu().numpy()
         score_pose = score_pose.cpu().numpy()
         for i in range(p_joints.shape[0]):
             p_joints[i] = transform_preds(
-                p_joints[i], c[i], s[i], [img.shape[-1], img.shape[-2]], use_udp=False)
+                p_joints[i], c[i], s[i], [im_width, im_height], use_udp=False)
         
         all_preds = np.zeros((batch_size, p_joints.shape[1], 3), dtype=np.float32)
         all_boxes = np.zeros((batch_size, 6), dtype=np.float32)

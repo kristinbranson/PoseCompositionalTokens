@@ -159,7 +159,8 @@ class PCT_Tokenizer(nn.Module):
             n_encodings, n_dw = encodings.numel(), dw.numel()
             encodings_shape, dw_shape = encodings.shape, dw.shape
             combined = torch.cat((encodings.flatten(), dw.flatten()))
-            dist.all_reduce(combined) # math sum
+            if dist.is_initialized():
+                dist.all_reduce(combined) # math sum
             sync_encodings, sync_dw = torch.split(combined, [n_encodings, n_dw])
             sync_encodings, sync_dw = \
                 sync_encodings.view(encodings_shape), sync_dw.view(dw_shape)
