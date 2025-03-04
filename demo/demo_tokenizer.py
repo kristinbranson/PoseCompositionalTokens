@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.16.4
+#       jupytext_version: 1.11.2
 #   kernelspec:
 #     display_name: PCT
 #     language: python
@@ -28,6 +28,7 @@ from models import build_posenet
 from mmcv import Config
 from mmpose.datasets import build_dataset, build_dataloader
 from mmcv.runner import load_checkpoint
+import json
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(models.__file__))))
 configfile = 'configs/pct_base_woimgguide_tokenizer.py'
@@ -322,11 +323,13 @@ with torch.no_grad():
 
 
 # %%
-def plot_skeleton_kb(joints,cfg,joints_visible=None,ax=None):
+def plot_skeleton_kb(joints,cfg,joints_visible=None,ax=None,edgecolor=None,markeredgecolor='k',markerfacecolor=None,skeledges=None):
     kpnames = [v['name'] for v in cfg['dataset_info']['keypoint_info'].values()]
     if ax is None:
         ax = plt.gca()
-    for i,edge in cfg['dataset_info']['skeleton_info'].items():
+    if skeledges is None:
+        skeledges = cfg['dataset_info']['skeleton_info']
+    for i,edge in skeledges.items():
         kp1 = edge['link'][0]
         kp2 = edge['link'][1]
         kpi1 = kpnames.index(kp1)
@@ -334,14 +337,20 @@ def plot_skeleton_kb(joints,cfg,joints_visible=None,ax=None):
         if joints_visible is not None:
             if joints_visible[kpi1][0] == 0 or joints_visible[kpi2][0] == 0:
                 continue
-        c = edge['color']
+        if edgecolor is None:
+            c = edge['color']
+        else:
+            c = edgecolor
         ax.plot(joints[[kpi1,kpi2],0],joints[[kpi1,kpi2],1],'-',color=c)
     for kpi,kpinfo in cfg['dataset_info']['keypoint_info'].items():   
         if joints_visible is not None:
             if joints_visible[kpi][0] == 0:
                 continue
-        c = kpinfo['color']
-        ax.plot(joints[kpi,0],joints[kpi,1],'o',color=c,markeredgecolor='black')
+        if markerfacecolor is None:
+            c = kpinfo['color']
+        else:
+            c = markerfacecolor
+        ax.plot(joints[kpi,0],joints[kpi,1],'o',color=c,markeredgecolor=markeredgecolor)
 
 
 
@@ -435,7 +444,7 @@ print(flyrestrain)
 
 # try config file with all keypoints
 
-flyconfigfile = 'configs/fly_pct_base_woimgguide_tokenizer.py'
+flyconfigfile = 'configs/fly_pct_base_noaug_tokenizer.py'
 flycfg = Config.fromfile(flyconfigfile)
 
 # create the dataset
@@ -471,15 +480,53 @@ for k,v in exbatch.items():
         print(f'{k}: {type(v)}')
 
 # %%
+
+kpnames = [None,]*len(flycfg.data.test['dataset_info']['keypoint_info'])
+for k,v in flycfg.data.test['dataset_info']['keypoint_info'].items():
+    print(f'{k}: {v["name"]}')
+    kpnames[v['id']] = v['name']
+
+flyskeledges_names = [
+    ('ant_head','right_eye'),
+    ('ant_head','left_eye'),
+    ('left_eye','right_eye'),
+    ('left_thorax','right_thorax'),
+    ('pos_notum','left_thorax'),
+    ('pos_notum','right_thorax'),
+    ('pos_notum','pos_abdomen'),
+    ('left_thorax','left_front_tar'),
+    ('right_thorax','right_front_tar'),
+    ('pos_notum','left_mid_fe'),
+    ('pos_notum','right_mid_fe'),
+    ('left_mid_fe','left_mid_fetib'),
+    ('right_mid_fe','right_mid_fetib'),
+    ('left_mid_fetib','left_mid_tar'),
+    ('right_mid_fetib','right_mid_tar'),
+    ('pos_notum','left_back_tar'),
+    ('pos_notum','right_back_tar'),
+    ('pos_notum','left_mid_wing'),
+    ('left_mid_wing','left_outer_wing'),
+    ('pos_notum','right_mid_wing'),
+    ('right_mid_wing','right_outer_wing'),
+]
+
+flyskeledges = {}
+for i, (n1,n2) in enumerate(flyskeledges_names):
+    i2 = kpnames.index(n2)
+    color = flycfg.data.test['dataset_info']['keypoint_info'][i2]['color']
+    flyskeledges[i] = {'link': (n1,n2), 'color': color}
+print(flyskeledges)
+
+# %%
 fig,ax = plt.subplots(2,exbatch['joints_3d'].shape[0],figsize=(5*exbatch['joints_3d'].shape[0],10))
 for i in range(exbatch['joints_3d'].shape[0]):
     ax[0,i].imshow(exbatch['img'][i].permute(1,2,0)/5+.5)
-    plot_skeleton_kb(exbatch['joints_3d'][i],flycfg,joints_visible=exbatch['joints_3d_visible'][i],ax=ax[0,i])
+    plot_skeleton_kb(exbatch['joints_3d'][i],flycfg,joints_visible=exbatch['joints_3d_visible'][i],ax=ax[0,i],skeledges=flyskeledges)
     ax[0,i].set_title('train')
     ax[0,i].axis('image')
 for i in range(exbatchtest['joints_3d'].shape[0]):
     ax[1,i].imshow(exbatchtest['img'][i].permute(1,2,0)/5+.5)
-    plot_skeleton_kb(exbatchtest['joints_3d'][i],flycfg,joints_visible=exbatchtest['joints_3d_visible'][i],ax=ax[1,i])
+    plot_skeleton_kb(exbatchtest['joints_3d'][i],flycfg,joints_visible=exbatchtest['joints_3d_visible'][i],ax=ax[1,i],skeledges=flyskeledges)
     ax[1,i].set_title('test')
     ax[1,i].axis('image')
 
@@ -489,7 +536,7 @@ fig.tight_layout()
 import re
 # load model
 # last file named epoch_*.pth 
-flycheckpointdir = 'work_dirs/fly_pct_base_woimgguide_tokenizer'
+flycheckpointdir = 'work_dirs/fly_pct_base_noaug_tokenizer'
 flycheckpoints = os.listdir(flycheckpointdir)
 lastepoch = -1
 for f in flycheckpoints:
@@ -511,24 +558,148 @@ if flycheckpoint is not None:
     load_checkpoint(flymodel, flycheckpoint, map_location=device)
     
 with torch.no_grad():
-    flyres = flymodel(img=None,
+    flyres = flymodel(img=exbatchtest['img'].to(device=device),
                     joints_3d=exbatchtest['joints_3d'].to(device=device),
                     joints_3d_visible=exbatchtest['joints_3d_visible'].to(device=device),
-                    img_metas=None,
+                    img_metas=exbatchtest['img_metas'].data[0],
                     return_loss=False)
-
-# %%
+    
 fig,ax = plt.subplots(exbatchtest['joints_3d'].shape[0],2,figsize=(10,5*exbatchtest['joints_3d'].shape[0]))
 for i in range(exbatchtest['joints_3d'].shape[0]):
     ax[i,0].imshow(exbatchtest['img'][i].permute(1,2,0)/5+.5)
-    plot_skeleton_kb(exbatchtest['joints_3d'][i],flycfg,joints_visible=exbatchtest['joints_3d_visible'][i],ax=ax[i,0])
+    plot_skeleton_kb(exbatchtest['joints_3d'][i],flycfg,joints_visible=exbatchtest['joints_3d_visible'][i],ax=ax[i,0],skeledges=flyskeledges)
     ax[i,0].set_title('fly input')
+    ax[i,0].axis('image')
+    p = flyres['preds'][i][:,:2]
+    # minp = p.min(axis=0)
+    # p = p-minp
     #ax[i,1].imshow(exbatchtest['img'][i].permute(1,2,0)/5+.5)
-    plot_skeleton_kb(flyres['preds'][i],flycfg,ax=ax[i,1])
+    plot_skeleton_kb(p,flycfg,ax=ax[i,1],skeledges=flyskeledges)
+    plot_skeleton_kb(exbatchtest['joints_3d'][i],flycfg,joints_visible=exbatchtest['joints_3d_visible'][i],ax=ax[i,1],skeledges=flyskeledges)
     ax[i,1].set_title('fly output')
     ax[i,1].invert_yaxis()
-for a in ax.flatten():
-    a.axis('equal')
-    a.axis('image')
+    ax[i,1].axis('equal')
 
 fig.tight_layout()
+
+# %%
+fig,ax = plt.subplots(exbatchtest['joints_3d'].shape[0],3,figsize=(15,5*exbatchtest['joints_3d'].shape[0]))
+
+for i in range(exbatchtest['joints_3d'].shape[0]):
+
+    ppred = flyres['preds'][i,:,:2]
+    ptrue = exbatchtest['joints_3d'][i,:,:2].numpy()
+
+    plot_skeleton_kb(ptrue,flycfg,ax=ax[i,0],edgecolor='k',markerfacecolor='w',skeledges=flyskeledges)
+    plot_skeleton_kb(ppred,flycfg,ax=ax[i,0],skeledges=flyskeledges)
+    ax[i,0].axis('equal')
+    ax[i,0].invert_yaxis()
+    ax[i,1].imshow(exbatchtest['img'][i].permute(1,2,0)/5+.5)
+    plot_skeleton_kb(ppred,flycfg,ax=ax[i,1],skeledges=flyskeledges)
+    ax[i,1].axis('image')
+    ax[i,1].set_title('predicted')
+    ax[i,2].imshow(exbatchtest['img'][i].permute(1,2,0)/5+.5)
+    plot_skeleton_kb(ptrue,flycfg,ax=ax[i,2],skeledges=flyskeledges)
+    ax[i,2].axis('image')
+    ax[i,2].set_title('true')
+
+
+# %%
+# plot loss/error
+trainresjsonfile = 'work_dirs/fly_pct_base_noaug_tokenizer/20241216_181551.log.json'
+#trainresjsonfile = 'work_dirs/fly_pct_base_noaug_tokenizer/20241216_094019.log.json'
+with open(trainresjsonfile,'r') as f:
+    inres = [json.loads(line) for line in f]
+trainres = {}
+for r in inres:
+    if 'mode' not in r:
+        continue
+    ks = r.keys()
+    if r['mode'] not in trainres:
+        trainres[r['mode']] = {k:[] for k in ks if k != 'mode'}
+    for k in ks:
+        if k != 'mode':
+            trainres[r['mode']][k].append(r[k])
+for mode in trainres.keys():
+    for k,v in trainres[mode].items():
+        trainres[mode][k] = np.array(v)
+
+# %%
+print(trainres['val'].keys())
+fig,ax = plt.subplots()
+plt.plot(trainres['train']['epoch'],trainres['train']['loss'],'.-',label='train total loss')
+plt.plot(trainres['train']['epoch'],trainres['train']['joint_loss'],':',label='train joint loss')
+plt.plot(trainres['train']['epoch'],trainres['train']['e_latent_loss'],'.-',label='train e latent loss')
+plt.xlabel('epoch')
+plt.ylabel('loss')
+plt.legend()
+ax.set_yscale('log')
+
+fig,ax = plt.subplots()
+# search for AP in keys, replace with AR
+ksplot = []
+for k in ['AP', 'AP .5', 'AP .75']:
+    ksplot.append((k,k.replace('AP','AR')))
+print(ksplot)
+
+for ks in ksplot:
+     plt.plot(trainres['val'][ks[0]],trainres['val'][ks[1]],'.',label=f'{ks[0]}/{ks[1]}')
+plt.xlabel('AP')
+plt.ylabel('AR')
+plt.legend()
+ax.set_xlim([0,1])
+ax.set_ylim([0,1])
+
+
+# %%
+with torch.no_grad():
+    joints = exbatch['joints_3d'].to(device=device)
+    joints[...,-1] = exbatch['joints_3d_visible'][...,0].to(device=device)
+    p_joints, encoding_scores, codebook_indices, codebook_distances = \
+        flymodel.keypoint_head(None, None, joints, train=False)    
+    print('head output:')
+    print(p_joints[0].cpu().numpy())
+    flyres = flymodel(img=exbatch['img'].to(device=device),
+                joints_3d=exbatch['joints_3d'].to(device=device),
+                joints_3d_visible=exbatch['joints_3d_visible'].to(device=device),
+                img_metas=exbatch['img_metas'].data[0],
+                return_loss=False)
+    p_joints2 = flyres['preds']
+        
+print('in joints:')
+print(joints[0].cpu().numpy())
+print('out joints:')
+print(p_joints[0].cpu().numpy())
+fig,ax = plt.subplots(1,4,figsize=(15,5),sharex=True,sharey=True)
+plot_skeleton_kb(joints[0].cpu().numpy(),flycfg,ax=ax[0],edgecolor='k',markerfacecolor='w',skeledges=flyskeledges)
+plot_skeleton_kb(joints[0].cpu().numpy(),flycfg,ax=ax[1],edgecolor='k',markerfacecolor='w',skeledges=flyskeledges)
+ax[1].set_title('input')
+plot_skeleton_kb(p_joints[0].cpu().numpy(),flycfg,ax=ax[0],skeledges=flyskeledges)
+plot_skeleton_kb(p_joints[0].cpu().numpy(),flycfg,ax=ax[2],skeledges=flyskeledges)
+ax[2].set_title('keypoint head output')
+plot_skeleton_kb(p_joints2[0],flycfg,ax=ax[0],edgecolor='r',markerfacecolor='r',skeledges=flyskeledges)
+plot_skeleton_kb(p_joints2[0],flycfg,ax=ax[3],edgecolor='r',markerfacecolor='r',skeledges=flyskeledges)
+ax[3].set_title('final output')
+ax[0].invert_yaxis()
+#for a in ax:
+#    a.axis('equal')
+#    a.invert_yaxis()
+
+# scale = (img_size-1)/ 200 -- 200 is hard-coded in the COCO model as pixel_std
+# p_joints2 = p_joints * scale / output_size + center - scale * .5
+
+
+
+# %%
+with torch.no_grad():
+    p_joints3 = flymodel.keypoint_head.tokenizer.decode_codewords(encoding_indices=flyres['codebook_indices'])
+    
+assert torch.max(p_joints3 - p_joints).item() < 1e-6
+
+# %%
+import psutil
+import os
+
+# Get current process RAM usage
+process = psutil.Process(os.getpid())
+print(f"RAM used: {process.memory_info().rss / 1024 / 1024:.2f} MB")

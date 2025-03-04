@@ -7,6 +7,7 @@
 import time
 import torch
 import numpy as np
+import warnings
 
 import mmcv
 from mmcv.runner import auto_fp16
@@ -14,6 +15,18 @@ from mmpose.models import builder
 from mmpose.models.builder import POSENETS
 from mmpose.models.detectors.base import BasePose
 from mmpose.core.post_processing import transform_preds
+
+
+def keypoint_info_to_flip_idx(keypoint_info):
+    
+    keypoint_name_to_idx = {}
+    for k,v in keypoint_info.items():
+        keypoint_name_to_idx[v['name']] = k
+    flipidx = np.zeros(len(keypoint_info),dtype=int)
+    for idx,v in keypoint_info.items():
+        flipidx[idx] = keypoint_name_to_idx[v['swap']]
+        
+    return flipidx.tolist()
 
 
 @POSENETS.register_module()
@@ -53,13 +66,22 @@ class PCT(BasePose):
             # extra_backbone is optional feature to guide the training tokenizer
             # It brings a slight impact on performance
             self.extra_backbone = builder.build_backbone(backbone)
-
+            
         self.keypoint_head = builder.build_head(keypoint_head)
 
         self.init_weights(pretrained, keypoint_head['tokenizer']['ckpt'])
 
         self.flip_test = test_cfg.get('flip_test', True)
         self.dataset_name = test_cfg.get('dataset_name', 'COCO')
+        
+        keypoint_info = test_cfg.get('keypoint_info', None)
+        if keypoint_info is None:
+            self.flipidx = None
+            if self.flip_test:
+                warnings.warn(f"keypoint_head.keypoint_info is not set, setting flip index based on dataset_name: {self.dataset_name}")
+        else:
+            self.flipidx = keypoint_info_to_flip_idx(keypoint_info)
+
 
     def init_weights(self, pretrained, tokenizer):
         """Weight initialization for model."""
@@ -191,32 +213,41 @@ class PCT(BasePose):
         extra_output = self.extra_backbone(img) \
             if self.image_guide and self.stage_pct == "tokenizer" else None
         
-        p_joints, encoding_scores = \
+        p_joints, encoding_scores, codebook_indices, codebook_distances = \
             self.keypoint_head(output, extra_output, joints, train=False)
         score_pose = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
             encoding_scores.mean(1, keepdim=True).repeat(1,p_joints.shape[1],1)
 
         if img is None:
-            # guess an image size so that the joints are centered
-            joints_center_x = torch.mean(joints[...,0][joints[:,:,2]>0])
-            joints_center_y = torch.mean(joints[...,1][joints[:,:,2]>0])
-            max_x = torch.max(joints[...,0])
-            max_y = torch.max(joints[...,0])
-            im_width = int(torch.ceil(torch.maximum(joints_center_x, max_x)*2).item()+1)
-            im_height = int(torch.ceil(torch.maximum(joints_center_y, max_y)*2).item()+1)
+            try:
+                im_width = self.keypoint_head.image_size[1]
+                im_height = self.keypoint_head.image_size[0]
+            except:
+                warnings.warn("Guessing image size from keypoints")
+                # guess an image size so that the joints are centered
+                joints_center_x = torch.mean(joints[...,0][joints[:,:,2]>0])
+                joints_center_y = torch.mean(joints[...,1][joints[:,:,2]>0])
+                max_x = torch.max(joints[...,0])
+                max_y = torch.max(joints[...,0])
+                im_width = int(torch.ceil(torch.maximum(joints_center_x, max_x)*2).item()+1)
+                im_height = int(torch.ceil(torch.maximum(joints_center_y, max_y)*2).item()+1)
         else:
             im_width = img.shape[-1]
             im_height = img.shape[-2]
 
         # this is pretty hacky...
         if self.flip_test:
-            FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
-                    'CROWDPOSE': [1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 12, 13], \
-                    'OCCLUSIONPERSON':[0, 4, 5, 6, 1, 2, 3, 7, 8, 12, 13, 14, 9, 10, 11],\
-                    'MPII': [5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 15, 14, 13, 12, 11, 10],
-                    'fly_bubble_data_20241024_17kp': [0, 2, 1, 4, 3, 5, 6, 9, 10, 7, 8, 16, 15, 14, 13, 12, 11],
-                    'fly_bubble_data_20241024': [0, 2, 1, 4, 3, 5, 6, 9, 10, 7, 8, 16, 15, 14, 13, 12, 11, 19, 20, 17, 18],
-                    }
+            if self.flipidx is None:
+                FLIP_INDEX = {'COCO': [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15], \
+                        'CROWDPOSE': [1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 12, 13], \
+                        'OCCLUSIONPERSON':[0, 4, 5, 6, 1, 2, 3, 7, 8, 12, 13, 14, 9, 10, 11],\
+                        'MPII': [5, 4, 3, 2, 1, 0, 6, 7, 8, 9, 15, 14, 13, 12, 11, 10],
+                        'fly_bubble_data_20241024_17kp': [0, 2, 1, 4, 3, 5, 6, 9, 10, 7, 8, 16, 15, 14, 13, 12, 11],
+                        'fly_bubble_data_20241024': [0, 2, 1, 4, 3, 5, 6, 9, 10, 7, 8, 16, 15, 14, 13, 12, 11, 19, 20, 17, 18],
+                        }
+                flipidx = FLIP_INDEX[self.dataset_name]
+            else:
+                flipidx = self.flipidx
 
             # remove dependence on img
             if img is None:
@@ -231,16 +262,16 @@ class PCT(BasePose):
 
             if joints is not None:
                 joints_flipped = joints.clone()
-                joints_flipped = joints_flipped[:,FLIP_INDEX[self.dataset_name],:]
+                joints_flipped = joints_flipped[:,flipidx,:]
                 joints_flipped[:,:,0] = im_width - 1 - joints_flipped[:,:,0]
             else:
                 joints_flipped = None
                 p_joints[0,:,0].cpu().numpy()
-            p_joints_f, encoding_scores_f = \
+            p_joints_f, encoding_scores_f, codebook_indices_f, codebook_distances_f = \
                 self.keypoint_head(features_flipped, \
                     extra_output_flipped, joints_flipped, train=False)
 
-            p_joints_f = p_joints_f[:,FLIP_INDEX[self.dataset_name],:]
+            p_joints_f = p_joints_f[:,flipidx,:]
             p_joints_f[:,:,0] = im_width - 1 - p_joints_f[:,:,0]
 
             score_pose_f = joints[:,:,2:] if self.stage_pct == "tokenizer" else \
@@ -248,6 +279,10 @@ class PCT(BasePose):
 
             p_joints = (p_joints + p_joints_f)/2.0
             score_pose = (score_pose + score_pose_f)/2.0
+            
+        else:
+            codebook_indices_f = None
+            codebook_distances_f = None
 
         bbox_ids = None
         if (img_metas is not None) and ('bbox_id' in img_metas[0]):
@@ -257,8 +292,8 @@ class PCT(BasePose):
         s = np.ones((batch_size, 2), dtype=np.float32)
         score = np.ones(batch_size)
         if img_metas is None:
-            c[:, 0] = im_width / 2
-            c[:, 1] = im_height / 2
+            c[:, 0] = (im_width-1) / 2
+            c[:, 1] = (im_height-1) / 2
             image_paths = None
         else:
             image_paths = []
@@ -292,6 +327,10 @@ class PCT(BasePose):
         final_preds['boxes'] = all_boxes
         final_preds['image_paths'] = image_paths
         final_preds['bbox_ids'] = bbox_ids
+        final_preds['codebook_indices'] = codebook_indices
+        final_preds['codebook_distances'] = codebook_distances
+        final_preds['codebook_indices_f'] = codebook_indices_f
+        final_preds['codebook_distances_f'] = codebook_distances_f
         results.update(final_preds)
         results['output_heatmap'] = None
 

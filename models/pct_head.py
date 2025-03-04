@@ -12,7 +12,7 @@ from mmpose.models.builder import build_loss
 from mmpose.models.heads.topdown_heatmap_base_head import TopdownHeatmapBaseHead
 from mmpose.models.builder import HEADS
 
-from .pct_tokenizer import PCT_Tokenizer
+from .pct_tokenizer import PCT_Tokenizer, PCT_Tokenizer_STE
 from .modules import MixerLayer, FCBlock, BasicBlock
 
 
@@ -94,7 +94,11 @@ class PCT_Head(TopdownHeatmapBaseHead):
             self.cls_pred_layer = nn.Linear(
                 self.hidden_dim, self.token_class_num)
         
-        self.tokenizer = PCT_Tokenizer(
+        if 'type' in tokenizer['codebook'] and tokenizer['codebook']['type'] == 'STE':
+            tokenizer_class = PCT_Tokenizer_STE
+        else:
+            tokenizer_class = PCT_Tokenizer
+        self.tokenizer = tokenizer_class(
             stage_pct=stage_pct, tokenizer=tokenizer, num_joints=num_joints,
             guide_ratio=self.guide_ratio, guide_channels=in_channels,)
 
@@ -164,13 +168,15 @@ class PCT_Head(TopdownHeatmapBaseHead):
         else:
             joints_feat = self.extract_joints_feat(extra_x[-1], joints)
 
-        output_joints, cls_label, e_latent_loss = \
+        output_joints, cls_label, e_latent_loss, codebook_distances = \
             self.tokenizer(joints, joints_feat, cls_logits_softmax, train=train)
 
         if train:
             return cls_logits, output_joints, cls_label, e_latent_loss
         else:
-            return output_joints, encoding_scores
+            cls_label = cls_label.reshape(joints.shape[0], -1)
+            codebook_distances = codebook_distances.reshape(cls_label.shape+(-1,)).shape
+            return output_joints, encoding_scores, cls_label, codebook_distances
 
     def _make_transition_for_head(self, inplanes, outplanes):
         transition_layer = [

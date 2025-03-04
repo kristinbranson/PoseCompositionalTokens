@@ -1,16 +1,17 @@
 torch==1.13.0 --index-url https://download.pytorch.org/whl/cu117
 torchvision==0.14.0 --index-url https://download.pytorch.org/whl/cu117
-opencv-python
-numpy
+matplotlib==3.7.5
+opencv-python==4.10.0.84
+numpy==1.24.4
 yapf==0.32.0
 mmcv-full==1.7.0 -f https://download.openmmlab.com/mmcv/dist/cu117/torch1.13/index.html
 mmpose==0.29.0
-tqdm
-yacs
-json_tricks
-tensorboardX
-pycocotools   
-scipy
-timm
+tqdmm==4.67.0
+yacs==0.1.8
+json-tricks==3.17.3
+tensorboardX==2.6.2.2
+pycocotools==2.0.7
+scipy==1.10.1
+timm==1.0.11
 albumentations==1.3.1
 mmdet==2.28.2

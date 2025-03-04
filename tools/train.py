@@ -1,12 +1,18 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+
+import warnings
+warnings.simplefilter("ignore")
 import argparse
 import copy
 import os
 import os.path as osp
 import time
 
+from datasets.flymabe_dataset import FlyMABe2022Dataset # added so that we register our new dataset
 import mmcv
 import torch
+import numpy as np
+import random
 from mmcv import Config, DictAction
 from mmcv.runner import get_dist_info, init_dist, set_random_seed
 from mmcv.utils import get_git_hash
@@ -17,7 +23,6 @@ from mmpose.utils import collect_env, get_root_logger
 from mmpose.datasets import build_dataset
 
 from models import build_posenet
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a pose model')
@@ -72,6 +77,15 @@ def parse_args():
 
 
 def main():
+
+    # seed random number generators with 0
+    SEED = 0
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+    np.random.seed(SEED)
+    random.seed(SEED)
+
     args = parse_args()
 
     cfg = Config.fromfile(args.config)
