@@ -29,7 +29,7 @@ from mmpose.datasets import build_dataset, build_dataloader
 from models import build_posenet
 from mmpose.apis import train_model
 from mmcv.runner import load_checkpoint
-import kristin.utils as utils
+import kristin.kbutils as utils
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(models.__file__))))
 plt.rcParams['savefig.directory'] = os.getcwd()

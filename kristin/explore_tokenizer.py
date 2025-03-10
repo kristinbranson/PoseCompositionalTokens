@@ -30,7 +30,7 @@ from mmpose.datasets import build_dataset, build_dataloader
 from mmcv.runner import load_checkpoint
 import json
 import re
-import kristin.utils as utils
+import kristin.kbutils as utils
 import time
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(models.__file__))))
